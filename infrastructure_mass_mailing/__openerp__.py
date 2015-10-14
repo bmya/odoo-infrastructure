@@ -1,26 +1,25 @@
 # -*- coding: utf-8 -*-
 
 {
-    'name': 'Infrastructure Issue - Project',
+    'name': 'Infrastructure Mass Mailing Integration',
     'version': '8.0.1.0.0',
-    'description': u'Infrastructure Issue',
+    'description': u'Infrastructure Mass Mailing Integration',
     'category': u'base.module_category_knowledge_management',
     'author': u'ADHOC SA',
     'website': 'www.adhoc.com.ar',
     'license': 'AGPL-3',
     'depends': [
         'infrastructure',
-        'project_issue',
+        'mass_mailing',
     ],
     'sequence': 14,
     'summary': '',
     'installable': True,
-    'auto_install': False,
+    'auto_install': True,
     'application': False,
     'images': [],
     'data': [
-        'project_issue_view.xml',
-        'database_view.xml',
+        'mass_mailing_view.xml',
     ],
     'demo': [],
     'test': [],

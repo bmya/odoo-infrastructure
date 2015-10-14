@@ -21,10 +21,25 @@ class database_type(models.Model):
         string='Name',
         required=True
         )
+    description = fields.Text(
+        string='Description',
+        )
+    backups_enable = fields.Boolean(
+        'Backups Enable?',
+        )
+    check_database = fields.Boolean(
+        'Check Databse with cron',
+        help="Suggest Check Databases Automatically. Suggested for instances "
+        "that restart automatically"
+        )
+    demo_data = fields.Boolean(
+        string='Demo Data?',
+        help='Use demo data by default on databases?'
+        )
     prefix = fields.Char(
         string='Prefix',
         required=True,
-        size=4
+        size=8
         )
     url_prefix = fields.Char(
         string='URL Prefix'
@@ -54,12 +69,19 @@ class database_type(models.Model):
         required=True,
         default='normal'
         )
+    sources_type = fields.Selection([
+        ('own', 'Own'), ('clone_from', 'Clone From'), ('use_from', 'Use From')
+        ],
+        'Sources Type',
+        required=True,
+        default='own',
+        help='* own: sources are cloned from host (git, bitbucet, etc)\n'
+        '* clone_from: sources are cloned from another instance'
+        '* use_from: sources are used from another instance'
+        )
     sources_from_id = fields.Many2one(
         'infrastructure.database_type',
         string='Sources From',
-        help='If none is selected sources are cloned from host, if you want to\
-        clone them from other instance, choose the databse type from where the\
-        sources are going to be clone',
         )
     color = fields.Integer(
         string='Color'
@@ -123,3 +145,10 @@ class database_type(models.Model):
     @api.multi
     def show_db_admin_pass(self):
         raise Warning(_("Password: '%s'") % self.db_admin_pass)
+
+    @api.onchange('service_type')
+    def change_service_type(self):
+        if self.service_type != 'no_service':
+            self.check_database = True
+        else:
+            self.check_database = False

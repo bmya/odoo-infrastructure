@@ -57,6 +57,7 @@ class server(models.Model):
         ('draft', 'Draft'),
         ('to_install', 'To Install'),
         ('active', 'Active'),
+        ('inactive', 'Inactive'),
         ('cancel', 'Cancel'),
     ]
 
@@ -161,7 +162,7 @@ class server(models.Model):
         'infrastructure.database',
         'server_id',
         string='Databases',
-        domain=[('state', '!=', 'cancel')],
+        # domain=[('state', '!=', 'cancel')],
         )
     database_count = fields.Integer(
         string='# Databases',
@@ -171,7 +172,7 @@ class server(models.Model):
         'infrastructure.instance',
         'server_id',
         string='Databases',
-        domain=[('state', '!=', 'cancel')],
+        # domain=[('state', '!=', 'cancel')],
         )
     instance_count = fields.Integer(
         string='# Instances',
@@ -323,7 +324,7 @@ class server(models.Model):
         'infrastructure.environment',
         'server_id',
         string='Environments',
-        domain=[('state', '!=', 'cancel')],
+        # domain=[('state', '!=', 'cancel')],
         context={'from_server': True},
         )
     server_configuration_id = fields.Many2one(
@@ -399,6 +400,8 @@ class server(models.Model):
             color = 1
         elif self.state == 'to_install':
             color = 3
+        elif self.state == 'inactive':
+            color = 3
         self.color = color
 
     @api.one
@@ -436,15 +439,22 @@ class server(models.Model):
             s.close()
         except:
             raise Warning(_(
-                'Could not connect to port %s.\n\
-                * Check connection with: "telnet %s %s"\n\
-                * You can also connect to server and check ports with "%s"\n\
-                * You can try opening port with %s\n\
-                * If still can not connect, contact server admin\n') % (
+                'Could not connect to port %s.\n'
+                '* Check connection with: "telnet %s %s" (if ok then scale '
+                'issue to our technical support)\n'
+                '* You can also connect to server and check ports with "%s" or'
+                ' "%s" (if ok try folowing step, if not ok scale issue to our '
+                'technical support )\n'
+                '* You can try opening port with %s (if not ok then it should '
+                'be a redirection issue of port %s to the server, ask '
+                'customer to check port %s is open and redirected to server)\n '
+            ) % (
                 port,
                 self.main_hostname, port,
                 "sudo netstat -plnt |grep :%s" % port,
+                "telnet localhost :%s" % port,
                 "sudo ufw allow %s/tcp" % port,
+                port, port,
                 ))
         else:
             _logger.info("Connection to port %s successfully established")
@@ -464,7 +474,7 @@ class server(models.Model):
                 ") % (server_codename, server_conf_codename))
         self.number_of_processors = fabtools.system.cpus()
         self.add_images()
-        self.signal_workflow('sgn_to_install')
+        self.action_to_install()
 
     @api.multi
     def action_test_connection(self):
@@ -595,10 +605,35 @@ class server(models.Model):
                 _('Could Not Reload Nginx! This is what we get: \n %s') % (e))
 
     @api.multi
-    def action_wfk_set_draft(self):
+    def action_to_draft(self):
         self.write({'state': 'draft'})
-        self.delete_workflow()
-        self.create_workflow()
+        return True
+
+    @api.multi
+    def action_to_install(self):
+        self.write({'state': 'to_install'})
+
+    @api.multi
+    def action_activate(self):
+        self.write({'state': 'active'})
+
+    @api.multi
+    def action_cancel(self):
+        self.write({'state': 'cancel'})
+
+    @api.multi
+    def action_inactive(self):
+        self.check_to_inactive()
+        self.write({'state': 'inactive'})
+
+    @api.one
+    def check_to_inactive(self):
+        not_inactive_envs = self.environment_ids.filtered(
+            lambda x: x.state != 'inactive')
+        if not_inactive_envs:
+            raise Warning(_(
+                'To set a server as inactive you should set all '
+                'environments to inactive first'))
         return True
 
     @api.multi
@@ -689,7 +724,7 @@ class server(models.Model):
             res['context'] = {
                 'default_server_id': self.id,
                 'search_default_server_id': self.id,
-                'search_default_not_cancel': 1,
+                'search_default_not_inactive': 1,
                 }
         if not len(environments.ids) > 1:
             form_view_id = self.env['ir.model.data'].xmlid_to_res_id(
@@ -717,7 +752,7 @@ class server(models.Model):
             res['context'] = {
                 'default_server_id': self.id,
                 'search_default_server_id': self.id,
-                'search_default_not_cancel': 1,
+                'search_default_not_inactive': 1,
             }
         if not len(instances.ids) > 1:
             form_view_id = self.env['ir.model.data'].xmlid_to_res_id(
@@ -745,7 +780,7 @@ class server(models.Model):
             res['context'] = {
                 'default_server_id': self.id,
                 'search_default_server_id': self.id,
-                'search_default_not_cancel': 1,
+                'search_default_not_inactive': 1,
             }
         if not len(databases.ids) > 1:
             form_view_id = self.env['ir.model.data'].xmlid_to_res_id(

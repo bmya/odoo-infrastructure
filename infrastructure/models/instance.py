@@ -25,6 +25,7 @@ class instance(models.Model):
     _states_ = [
         ('draft', 'Draft'),
         ('active', 'Active'),
+        ('inactive', 'Inactive'),
         ('cancel', 'Cancel'),
     ]
 
@@ -34,6 +35,7 @@ class instance(models.Model):
         readonly=True,
         states={'draft': [('readonly', False)]},
         )
+    # TODO rename to instance_type_id
     database_type_id = fields.Many2one(
         'infrastructure.database_type',
         string='Database Type',
@@ -118,6 +120,9 @@ class instance(models.Model):
         'instance_id',
         string='Repositories',
         copy=True,
+        )
+    sources_type = fields.Selection(
+        related='database_type_id.sources_type',
         )
     sources_from_id = fields.Many2one(
         'infrastructure.instance',
@@ -211,7 +216,7 @@ class instance(models.Model):
         'instance_id',
         string='Databases',
         context={'from_instance': True},
-        domain=[('state', '!=', 'cancel')],
+        # domain=[('state', '!=', 'cancel')],
         )
     addons_path = fields.Char(
         string='Addons Path',
@@ -434,15 +439,16 @@ class instance(models.Model):
         )
     odoo_service_state = fields.Selection(
         [('ok', 'Ok'), ('restart_required', 'Restart Required')],
-        'Odoo Service Status',
+        'Instance Status',
         readonly=True,
         )
     databases_state = fields.Selection([
             ('ok', 'Ok'),
-            ('refresh_dbs_required', 'Refresh Dbs Required'),
             ('actions_required', 'Actions Required'),
         ],
         'Databases Status',
+        compute='get_databases_state',
+        store=True,
         readonly=True,
         )
 
@@ -477,6 +483,8 @@ class instance(models.Model):
             color = 7
         elif self.state == 'cancel':
             color = 1
+        elif self.state == 'inactive':
+            color = 3
         self.color = color
 
     @api.one
@@ -489,22 +497,22 @@ class instance(models.Model):
     def get_sources_from(self):
         sources_from_id = False
         db_type = self.database_type_id
-        if db_type.sources_from_id:
+        if db_type.sources_type != 'own' and db_type.sources_from_id:
             sources_from_id = self.search([
                 ('database_type_id', '=', db_type.sources_from_id.id),
                 ('environment_id', '=', self.environment_id.id),
                 ], limit=1)
         self.sources_from_id = sources_from_id
 
-    @api.one
-    def refresh_dbs_update_state(self):
-        for database in self.database_ids:
-            database.refresh_update_state()
-        self.refresh_instance_update_state()
+    # @api.one
+    # def refresh_dbs_update_state(self):
+    #     for database in self.database_ids:
+    #         database.refresh_update_state()
+    #     self.refresh_instance_update_state()
 
     @api.one
-    @api.depends('refresh_dbs_required', 'database_ids.update_state')
-    def refresh_instance_update_state(self):
+    @api.depends('database_ids.update_state')
+    def get_databases_state(self):
         databases_state = 'ok'
         dbs_update_states = self.mapped('database_ids.update_state')
         actions_required_states = [
@@ -521,6 +529,26 @@ class instance(models.Model):
             if state in dbs_update_states:
                 databases_state = 'actions_required'
         self.databases_state = databases_state
+
+    # TODO remove
+    # @api.one
+    # def refresh_instance_update_state(self):
+    #     databases_state = 'ok'
+    #     dbs_update_states = self.mapped('database_ids.update_state')
+    #     actions_required_states = [
+    #         'init_and_conf',
+    #         'update',
+    #         'optional_update',
+    #         'to_install_modules',
+    #         'to_remove_modules',
+    #         'to_upgrade_modules',
+    #         ]
+    #     # TODO mejorar esta forma horrible, el tema es que el mapped me
+    #     # devuevle algo raro
+    #     for state in actions_required_states:
+    #         if state in dbs_update_states:
+    #             databases_state = 'actions_required'
+    #     self.databases_state = databases_state
 
     @api.one
     @api.depends('server_id')
@@ -591,10 +619,25 @@ class instance(models.Model):
         # return self.database_ids.xx
 
     @api.multi
-    def action_wfk_set_draft(self):
+    def action_activate(self):
+        # send to draft dbs that are inactive
+        self.mapped('database_ids').filtered(
+            lambda x: x.state == 'inactive').action_to_draft()
+        self.write({'state': 'active'})
+
+    @api.multi
+    def action_cancel(self):
+        self.write({'state': 'cancel'})
+
+    @api.multi
+    def action_inactive(self):
+        for instance in self:
+            instance.database_ids.action_inactive()
+        self.write({'state': 'inactive'})
+
+    @api.multi
+    def action_to_draft(self):
         self.write({'state': 'draft'})
-        self.delete_workflow()
-        self.create_workflow()
         return True
 
     @api.one
@@ -615,6 +658,8 @@ class instance(models.Model):
     @api.one
     @api.depends('environment_id')
     def _get_module_load(self):
+        if self.sources_type == 'use_from':
+            module_load = self.sources_from_id.module_load
         module_load = ','.join(
             [x.repository_id.server_wide_modules for x in (
                 self.instance_repository_ids) if (
@@ -627,14 +672,36 @@ class instance(models.Model):
     def _get_databases(self):
         self.database_count = len(self.database_ids)
 
+    @api.one
+    def check_instance_and_bds(self):
+        self.write({
+            'odoo_service_state': 'restart_required',
+            })
+        for database in self.database_ids:
+            database.with_context(
+                do_not_raise=True).refresh_update_state()
+        use_from_instances = self.search([
+            ('database_type_id.sources_type', '=', 'use_from'),
+            ('database_type_id.sources_from_id', '=',
+                self.database_type_id.id),
+            ('environment_id', '=', self.environment_id.id),
+            ], limit=1)
+        return use_from_instances.check_instance_and_bds()
+        # print 'use_from_instances', use_from_instances
+        # if use_from_instances:
+
     @api.multi
     def repositories_pull_clone_and_checkout(self):
         self.instance_repository_ids.repository_pull_clone_and_checkout(
             update=True)
+        self.check_instance_and_bds()
 
     @api.multi
     def add_repositories(self):
         _logger.info("Adding Repositories")
+        # if sources from another instance we dont add any repository
+        if self.sources_type == 'use_from':
+            return True
         # TODO cambiar cuando hagamos el campo este m2o y no bolean
         branch_id = self.environment_id.odoo_version_id.default_branch_id.id
         if self.default_repositories_id:
@@ -657,13 +724,19 @@ class instance(models.Model):
     @api.one
     @api.depends(
         'instance_repository_ids.repository_id.addons_path',
+        'sources_type',
+        'sources_from_id.addons_path',
     )
     def _get_addons_path(self):
         _logger.info("Getting Addons Path")
-        addons_paths = [
-            x.repository_id.addons_path for x in (
-                self.instance_repository_ids) if x.repository_id.addons_path]
-        self.addons_path = ','.join(addons_paths)
+        # if sources are from another instance, we get that instance path
+        if self.sources_type == 'use_from':
+            self.addons_path = self.sources_from_id.addons_path
+        else:
+            addons_paths = [
+                x.repository_id.addons_path for x in (
+                    self.instance_repository_ids) if x.repository_id.addons_path]
+            self.addons_path = ','.join(addons_paths)
 
     @api.onchange('environment_id')
     def _onchange_environment(self):
@@ -757,7 +830,10 @@ class instance(models.Model):
             conf_file_path = os.path.join(conf_path, 'openerp-server.conf')
             logfile = os.path.join(conf_path, 'odoo.log')
             data_dir = os.path.join(base_path, 'data_dir')
-            sources_path = os.path.join(base_path, 'sources')
+            if self.sources_type == 'use_from':
+                sources_path = self.sources_from_id.sources_path
+            else:
+                sources_path = os.path.join(base_path, 'sources')
         self.pg_data_path = pg_data_path
         self.backups_path = backups_path
         self.syncked_backup_path = syncked_backup_path
@@ -778,13 +854,13 @@ class instance(models.Model):
             raise Warning(_(
                 'You can not delete an instance that is of type protected,\
                 you can change type, or drop it manually'))
-        self.database_ids.signal_workflow('sgn_cancel')
+        self.database_ids.action_cancel()
         self.instance_repository_ids.write({'actual_commit': False})
         self.remove_odoo_service()
         self.remove_pg_service()
         self.delete_nginx_site()
         self.delete_paths()
-        self.signal_workflow('sgn_cancel')
+        self.action_cancel()
 
     @api.multi
     def create_instance(self):
@@ -800,7 +876,7 @@ class instance(models.Model):
         self.run_pg_service()
         self.update_conf_file()
         self.run_odoo_service()
-        self.signal_workflow('sgn_to_active')
+        self.action_activate()
 
     @api.one
     def get_commands(self):
@@ -1009,7 +1085,7 @@ class instance(models.Model):
                 'database_type_id': database_type.id,
                 'instance_id': new_instance.id,
                 })
-            new_db.signal_workflow('sgn_to_active')
+            new_db.action_activate()
             # TODO ver si hace falta esto o no, el tema es que esa instancia no
             # la terminamos activando
             # # we run this to deactivate backups
@@ -1033,6 +1109,7 @@ class instance(models.Model):
 
     @api.one
     def copy_databases_from(self, instance):
+        # TODO implement overwrite
         if self.database_type_id.type == 'protected':
             raise Warning('You can not replace data in a instance of type\
                 protected, you should do it manually or change type.')
@@ -1072,7 +1149,7 @@ class instance(models.Model):
         # Unlink actual databases
         _logger.info('Unlinking actual databases records')
         for database in self.database_ids:
-            database.signal_workflow('sgn_cancel')
+            database.action_cancel()
             database.unlink()
 
         # Create new databases
@@ -1083,7 +1160,7 @@ class instance(models.Model):
                 'instance_id': self.id,
                 })
             # we run this to deactivate backups
-            new_db.signal_workflow('sgn_to_active')
+            new_db.action_activate()
             # TODO desactivamos esto por problemas en el wait y no
             # configuramos los backups
             # we wait for service start
@@ -1219,18 +1296,41 @@ class instance(models.Model):
                 use_sudo=True)
 
     @api.one
+    def run_all(self):
+        self.run_pg_service()
+        self.run_odoo_service()
+
+    @api.one
+    def restart_all(self):
+        self.restart_pg_service()
+        self.restart_odoo_service()
+
+    @api.one
+    def remove_all(self):
+        self.remove_odoo_service()
+        self.remove_pg_service()
+
+    @api.one
+    def stop_all(self):
+        self.stop_odoo_service()
+        self.stop_pg_service()
+
+    @api.one
     def run_odoo_service(self):
         self.environment_id.server_id.get_env()
         _logger.info("Running Odoo Service %s " % self.name)
         sudo(self.run_odoo_cmd)
-
-    @api.one
-    def start_odoo_service(self):
-        self.environment_id.server_id.get_env()
-        _logger.info("Starting Odoo Service %s " % self.name)
-        sudo(self.start_odoo_cmd)
         if self.odoo_service_state == 'restart_required':
             self.odoo_service_state = 'ok'
+
+    # depreciated, use restart instead
+    # @api.one
+    # def start_odoo_service(self):
+    #     self.environment_id.server_id.get_env()
+    #     _logger.info("Starting Odoo Service %s " % self.name)
+    #     sudo(self.start_odoo_cmd)
+    #     if self.odoo_service_state == 'restart_required':
+    #         self.odoo_service_state = 'ok'
 
     @api.one
     def restart_odoo_service(self):
@@ -1268,11 +1368,12 @@ class instance(models.Model):
         _logger.info("Running Postgresql Service %s" % self.name)
         sudo(self.run_pg_cmd)
 
-    @api.one
-    def start_pg_service(self):
-        self.environment_id.server_id.get_env()
-        _logger.info("Starting Postgresql Service %s" % self.name)
-        sudo(self.start_pg_cmd)
+    # depreciated, use restart instead
+    # @api.one
+    # def start_pg_service(self):
+    #     self.environment_id.server_id.get_env()
+    #     _logger.info("Starting Postgresql Service %s" % self.name)
+    #     sudo(self.start_pg_cmd)
 
     @api.one
     def restart_pg_service(self):
@@ -1438,7 +1539,7 @@ class instance(models.Model):
             res['context'] = {
                 'default_instance_id': self.id,
                 'search_default_instance_id': self.id,
-                'search_default_not_cancel': 1,
+                'search_default_not_inactive': 1,
                 }
         if not len(databases.ids) > 1:
             form_view_id = self.env['ir.model.data'].xmlid_to_res_id(

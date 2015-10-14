@@ -11,16 +11,21 @@
             <field name="name"/>
             <field name="demo_data"/>
             <field name="partner_id"/>
-            <field name="database_type_id"/>
+            <!-- <field name="database_type_id"/> -->
+            <field name="instance_type_id"/>
             <field name="server_id"/>
             <field name="environment_id"/>
             <field name="instance_id"/>
             <field name="update_state"/>
+            <filter string="Not Inactive" name="not_inactive" domain="[('state', '!=', 'inactive')]"/>
+            <separator/>
+            <filter string="Check Database" name="check_database" domain="[('check_database', '=', True)]"/>
             <field name="overall_state"/>
-            <filter string="Not Cancel" name="not_cancel" domain="[('state','!=','cancel')]"/>
+            <!-- <filter string="Not Cancel" name="check_database" domain="[('check_database', '=', True)]"/> -->
             <group expand="0" string="Group By...">
                 <filter string="Partner" context="{'group_by':'partner_id'}"/>
-                <filter string="Type" context="{'group_by':'database_type_id'}"/>
+                <!-- <filter string="Type" context="{'group_by':'database_type_id'}"/> -->
+                <filter string="Type" context="{'group_by':'instance_type_id'}"/>
                 <filter string="Server" context="{'group_by':'server_id'}"/>
                 <filter string="Environment" context="{'group_by':'environment_id'}"/>
                 <filter string="Instance" context="{'group_by':'instance_id'}"/>
@@ -39,24 +44,28 @@
         <form string="database">
             <field name="id" invisible="1"/>
             <header>
-                <button name="action_wfk_set_draft"
+                <button name="action_to_draft"
                     type="object"
                     states="cancel"
                     string="to Draft"
                     />
-                <button name="sgn_to_maintenance"
+<!--                 <button name="action_to_maintenance"
+                    type="object"
                     states="active"
                     string="to Maintenance"
-                    />
-                <button name="sgn_deactivate"
+                    /> -->
+<!--                 <button name="action_deactivate"
+                    type="object"
                     states="active"
                     string="Deactivate"
-                    />
-                <button name="sgn_to_active"
+                    /> -->
+                <button name="action_activate"
+                    type="object"
                     states="deactivated,draft,maintenance"
                     string="to Active"
                     />
-                <button name="sgn_cancel"
+                <button name="action_cancel"
+                    type="object"
                     states="active,deactivated,maintenance"
                     string="Cancel"
                     />
@@ -69,7 +78,7 @@
                     <h2>
                         <field name="server_id" class="oe_inline"/> / <field name="environment_id" class="oe_inline"/> / <field name="instance_id" options="{'no_create': True}" class="oe_inline"/>
                     </h2>
-                    <field name="database_type_id" options="{'no_create': True}" class="oe_edit_only" default_focus="1" placeholder="Type..."/>
+                    <!-- <field name="database_type_id" options="{'no_create': True}" class="oe_edit_only" default_focus="1" placeholder="Type..."/> -->
                     <h1>
                         <field name="name" placeholder="Name..."/>
                     </h1>
@@ -110,10 +119,10 @@
                                 type="object"
                                 states="active"
                                 class="oe_link"/>
-                            <button name="update_db"
-                                string="⇒ Update Database"
+                            <button name="%(action_infrastructure_database_fix_wizard)d"
+                                string="⇒ Fix Database"
                                 attrs="{'invisible': ['|', ('update_state', '=', 'ok'), ('state', '!=', 'active')]}"
-                                type="object"
+                                type="action"
                                 class="oe_link"/>
                         </div>
                         <label for="base_modules_state"/>
@@ -141,6 +150,35 @@
                                 string="⇒ Refresh"
                                 type="object"
                                 states="active"
+                                class="oe_link"/>
+                        </div>
+                        <label for="instante_state"/>
+                        <div>
+                            <field
+                                name="instante_state"
+                                class="oe_inline"/>
+                            <button name="restart_instance"
+                                string="⇒ Start/Restart"
+                                type="object"
+                                attrs="{'invisible': ['|', ('instante_state', '=', 'ok'), ('state', '!=', 'active')]}"
+                                class="oe_link"/>
+                        </div>
+                        <label for="overall_state"/>
+                        <div>
+                            <field
+                                name="overall_state"
+                                class="oe_inline"/> - 
+                            <field
+                                name="last_overall_check_date"
+                                class="oe_inline"/>
+                            <button name="refresh_overall_state"
+                                string="⇒ Refresh"
+                                type="object"
+                                states="active"
+                                class="oe_link"/>
+                            <button name="clean_overall_state"
+                                string="⇒ Clean"
+                                type="object"
                                 class="oe_link"/>
                         </div>
                     </group>
@@ -220,18 +258,19 @@
     <field name="arch" type="xml">
         <tree string="database"
             fonts="bold:message_unread==True"
-            colors="red:overall_state =  'error'; grey:state=='cancelled';blue:state in ('draft',); black:state in ('active', 'deactivated', 'maintenance')"
+            colors="red:overall_state == 'error'; grey:state=='cancelled';blue:state in ('draft',); black:state in ('active', 'deactivated', 'maintenance')"
             >
             <field name="message_unread" invisible="1"/>
-            <field name="database_type_id"/>
+            <!-- <field name="database_type_id"/> -->
+            <field name="instance_type_id"/>
             <field name="name"/>
             <field name="partner_id"/>
             <field name="server_id"/>
-            <field name="environment_id" invisible="1"/>
-            <field name="instance_id"/>
+            <field name="environment_id"/>
+            <field name="instance_id" invisible="1"/>
             <field name="state"/>
             <!-- <field name="update_state"/> -->
-            <field name="overall_state"/>
+            <field name="overall_state" invisible="1"/>
         </tree>
     </field>
 </record>
@@ -273,7 +312,7 @@
     <field name="view_id" ref="view_database_kanban"/>
     <field name="search_view_id" ref="view_infrastructure_database_filter"/>
     <field name="domain">[]</field>
-    <field name="context">{'search_default_not_cancel': 1}</field>
+    <field name="context">{'search_default_not_inactive': 1}</field>
 </record>
 
 <record id="action_infrastructure_databases_to_correct" model="ir.actions.act_window">
@@ -284,7 +323,7 @@
     <field name="view_id" ref="view_database_kanban"/>
     <field name="search_view_id" ref="view_infrastructure_database_filter"/>
     <field name="domain">[]</field>
-    <field name="context">{'search_default_overall_state': 'error'}</field>
+    <field name="context">{'search_default_overall_state': 'error', 'search_default_check_database': True, 'search_default_not_inactive': 1}</field>
 </record>
 
 <menuitem

@@ -5,7 +5,9 @@
 ##############################################################################
 from openerp import models, fields, api, SUPERUSER_ID, _
 from openerp.exceptions import except_orm
+from openerp.tools.parse_version import parse_version
 import xmlrpclib
+import operator
 import socket
 import time
 from dateutil.relativedelta import relativedelta
@@ -20,12 +22,13 @@ import simplejson
 import logging
 _logger = logging.getLogger(__name__)
 _update_state_vals = [
+    ('unknown', 'Unknown'),
     ('init_and_conf', 'Init and Config'),
     ('update', 'Update'),
     ('optional_update', 'Optional Update'),
-    ('to_install_modules', 'Modules on To Install'),
-    ('to_remove_modules', 'Modules on To Remove'),
-    ('to_upgrade_modules', 'Modules on To Upgrade'),
+    ('modules_on_to_install', 'Modules on To Install'),
+    ('modules_on_to_remove', 'Modules on To Remove'),
+    ('modules_on_to_upgrade', 'Modules on To Upgrade'),
     ('ok', 'Ok'),
     ]
 
@@ -36,23 +39,55 @@ class database(models.Model):
     _name = 'infrastructure.database'
     _description = 'database'
     _inherit = ['ir.needaction_mixin', 'mail.thread']
+    _rec_name = 'display_name'
     _states_ = [
         ('draft', 'Draft'),
         ('maintenance', 'Maintenance'),
         ('active', 'Active'),
-        ('deactivated', 'Deactivated'),
+        ('inactive', 'Inactive'),
+        # ('deactivated', 'Deactivated'),
         ('cancel', 'Cancel'),
     ]
     _mail_post_access = 'read'
 
+    @api.multi
+    def message_get_default_recipients(self):
+        res = super(database, self).message_get_default_recipients()
+        database_email_cc = self._context.get('database_email_cc', False)
+        if database_email_cc == 'db_related_contacts':
+            for db_id in res.iterkeys():
+                db = self.browse(db_id)
+                commercial_partner_id = db.partner_id.commercial_partner_id
+                related_contacts = self.env['res.partner'].search([
+                    ('id', 'child_of', commercial_partner_id.id),
+                    ('email', '!=', False)])
+                res[db_id]['partner_ids'] = related_contacts.ids
+                # we replace partner for all related contacts
+                # exclude de partner id
+                # ('id', '!=', db.partner_id.id),
+                # res[db_id]['email_cc'] = ','.join(
+                #     related_contacts.mapped('email'))
+        return res
+
     database_type_id = fields.Many2one(
+        # TODO remove this field as it is no more longer needed
         'infrastructure.database_type',
         string='Database Type',
         readonly=True,
-        required=True,
+        # required=True,
         states={'draft': [('readonly', False)]},
-        track_visibility='onchange',
+        # track_visibility='onchange',
         copy=False,
+        )
+    instance_type_id = fields.Many2one(
+        # 'infrastructure.database_type',
+        string='Instance Type',
+        store=True,
+        related='instance_id.database_type_id',
+        )
+    display_name = fields.Char(
+        compute='_get_display_name',
+        store=True,
         )
     name = fields.Char(
         string='Name',
@@ -116,10 +151,11 @@ class database(models.Model):
         automatically dropped on this date',
         )
     advance_type = fields.Selection(
-        related='database_type_id.type',
+        related='instance_type_id.type',
+        # related='database_type_id.type',
         string='Type',
         readonly=True,
-        store=True,
+        # store=True,
         )
     state = fields.Selection(
         _states_,
@@ -224,12 +260,20 @@ class database(models.Model):
         'Update Status',
         readonly=True,
         )
+    last_overall_check_date = fields.Datetime(
+        'Last Overall Check',
+        readonly=True,
+        )
+    instante_state = fields.Selection(
+        related='instance_id.odoo_service_state',
+        string='Instance Status'
+        )
     update_state_detail = fields.Text(
         'Update Status Detail',
         readonly=True,
         )
     base_modules_state = fields.Selection(
-        [('ok', 'OK'), ('error', 'Error')],
+        [('ok', 'OK'), ('error', 'Error'), ('unknown', 'Unknown')],
         'Base Modules Status',
         readonly=True,
         )
@@ -238,7 +282,7 @@ class database(models.Model):
         readonly=True,
         )
     backups_state = fields.Selection(
-        [('ok', 'OK'), ('error', 'Error')],
+        [('ok', 'OK'), ('error', 'Error'), ('unknown', 'Unknown')],
         'Backups Status',
         readonly=True,
         )
@@ -246,9 +290,9 @@ class database(models.Model):
         'Backups Detail',
         readonly=True,
         )
-    # TODO mejorar esto usando algo de database type
     check_database = fields.Boolean(
-        'Check Databse with cron'
+        'Check Databse with cron',
+        copy=False,
         )
     overall_state = fields.Selection(
         [('ok', 'OK'), ('error', 'Error')],
@@ -257,19 +301,41 @@ class database(models.Model):
         store=True,
         )
 
+    @api.one
+    @api.depends('name', 'instance_type_id.prefix')
+    def _get_display_name(self):
+        self.display_name = "%s (%s)" % (
+            self.name, self.instance_type_id.prefix)
+
     @api.model
     def cron_check_databases(self):
-        databases = self.search([('check_database', '=', True)])
+        databases = self.with_context(
+            do_not_raise=True).search([
+                ('check_database', '=', True),
+                ('state', '!=', 'inactive'),
+            ])
         for db in databases:
-            _logger.info('Checking database id: "%s"' % db.id)
-            db.refresh_base_modules_state()
-            db.refresh_backups_state()
-            db.refresh_update_state()
+            db.refresh_overall_state()
             db._cr.commit()
         return True
 
     @api.one
-    @api.depends('backups_state', 'base_modules_state', 'update_state')
+    def restart_instance(self):
+        self.instance_id.restart_all()
+
+    @api.one
+    def refresh_overall_state(self):
+        _logger.info('Checking database id: "%s"' % self.id)
+        self.refresh_base_modules_state()
+        self.refresh_backups_state()
+        self.refresh_update_state()
+        self.last_overall_check_date = fields.Datetime.now()
+
+    @api.depends(
+        'backups_state',
+        'base_modules_state',
+        'update_state',
+        'instante_state')
     def get_overall_state(self):
         overall_state = 'ok'
         if self.backups_state and self.backups_state != 'ok':
@@ -279,12 +345,34 @@ class database(models.Model):
         elif self.update_state and self.update_state not in [
                 'ok', 'optional_update']:
             overall_state = 'error'
+        elif self.instante_state and self.instante_state != 'ok':
+            overall_state = 'error'
         self.overall_state = overall_state
 
     @api.multi
+    def clean_overall_state(self):
+        self.write({
+            'base_modules_state': False,
+            'backups_state': False,
+            'update_state': False,
+            })
+
+    # TODO mejorar el codigo este de do_not_raise, hacerlo mucho mas siemple
+    # se repite lo mismo en tres funciones distintas en distintos momentos
+    @api.multi
     def refresh_base_modules_state(self):
         self.ensure_one()
-        client = self.get_client()
+        do_not_raise = self._context.get('do_not_raise', False)
+        try:
+            client = self.get_client()
+        except:
+            if do_not_raise:
+                self.base_modules_state = 'unknown'
+                self.base_modules_state_detail
+                return True
+            else:
+                raise Warning(_('Could not get client'))
+        # TODO extend do_not_raise to following warnings
         base_modules_state = 'ok'
         base_modules = self.env[
             'infrastructure.base.module'].search([]).mapped('name')
@@ -303,30 +391,62 @@ class database(models.Model):
     @api.multi
     def refresh_backups_state(self):
         self.ensure_one()
+        do_not_raise = self._context.get('do_not_raise', False)
         if not self.backups_enable:
             self.backups_state = False
             return True
-        client = self.get_client()
+        try:
+            client = self.get_client()
+        except Exception, e:
+            msg = _(
+                'Could not get state!\n'
+                'This is what we get %s' % e)
+            if do_not_raise:
+                self.backups_state = 'unknown'
+                self.backups_state_detail = msg
+                return True
+            else:
+                raise Warning(msg)
         modules = ['database_tools']
         for module in modules:
             if client.modules(name=module, installed=True) is None:
-                raise Warning(_(
+                msg = _(
                     "You can not refresh backups state if module '%s' is not "
-                    "installed in the database") % (module))
+                    "installed in the database") % (module)
+                if do_not_raise:
+                    _logger.warning(msg)
+                    self.backups_state = ''
+                    self.backups_state_detail = msg
+                    return True
+                else:
+                    raise Warning(msg)
         try:
             backups_state = client.model(
                 'db.database').get_overall_backups_state()
         except Exception, e:
-                raise Warning(_(
-                    'Could not get state!\n'
-                    'This is what we get %s' % e))
+            msg = _(
+                'Could not get state!\n'
+                'This is what we get %s' % e)
+            if do_not_raise:
+                self.backups_state = 'unknown'
+                self.backups_state_detail = msg
+                return True
+            else:
+                raise Warning(msg)
         state = backups_state.get('state', False)
         detail = backups_state.get('detail', False)
 
         if state not in ['ok', 'error']:
-            raise Warning(_(
+            msg = _(
                 'Could not get state! Unknow error, we could not get state '
-                'from "%s"' % (backups_state)))
+                'from "%s"' % (backups_state))
+            if do_not_raise:
+                _logger.warning(msg)
+                self.backups_state = ''
+                self.backups_state_detail = msg
+                return True
+            else:
+                raise Warning(msg)
         self.backups_state = state
         self.backups_state_detail = detail
         return backups_state
@@ -334,38 +454,84 @@ class database(models.Model):
     @api.multi
     def refresh_update_state(self):
         self.ensure_one()
-        client = self.get_client()
+        do_not_raise = self._context.get('do_not_raise', False)
+        # we make a try because perhups instances is not up
+        try:
+            client = self.get_client()
+        except Exception, e:
+            msg = _(
+                'Could not get state!\n'
+                'This is what we get %s' % e)
+            if do_not_raise:
+                self.update_state = 'unknown'
+                self.update_state_detail = msg
+                return True
+            else:
+                raise Warning(msg)
         modules = ['database_tools']
         for module in modules:
             if client.modules(name=module, installed=True) is None:
-                raise Warning(_(
+                msg = (_(
                     "You can not refresh modules update status if module '%s' "
                     "is not installed in the database") % (module))
+                if do_not_raise:
+                    _logger.warning(msg)
+                    self.update_state = 'unknown'
+                    self.update_state_detail = msg
+                    return True
+                else:
+                    raise Warning(msg)
         try:
             update_state = client.model(
                 'ir.module.module').get_overall_update_state()
         except Exception, e:
-                raise Warning(_(
+                msg = (_(
                     'Could not get state!\n'
                     'This is what we get %s' % e))
+                if do_not_raise:
+                    _logger.warning(msg)
+                    self.update_state = 'unknown'
+                    self.update_state_detail = msg
+                    return True
+                else:
+                    raise Warning(msg)
         state = update_state.get('state', False)
         detail = update_state.get('detail', False)
         update_state_keys = [x[0] for x in _update_state_vals]
 
         if state not in update_state_keys:
-            raise Warning(_(
+            msg = (_(
                 'Could not get state! Unknow error, we could not get state '
                 'from "%s"' % (update_state)))
+            if do_not_raise:
+                _logger.warning(msg)
+                self.update_state = 'unknown'
+                self.update_state_detail = msg
+                return True
+            else:
+                raise Warning(msg)
         self.update_state = state
         self.update_state_detail = detail
-        self.instance_id.refresh_instance_update_state()
         return update_state
 
     @api.one
-    def update_db(self):
+    def fix_db_auto(self):
+        """This method is not used yet"""
         update_state = self.refresh_update_state()
         detail = update_state.get('detail', False)
         init_and_conf_modules = detail.get('init_and_conf_modules')
+        update_modules = detail.get('update_modules')
+        optional_update_modules = detail.get('optional_update_modules')
+        return self.fix_db(
+            init_and_conf_modules,
+            update_modules + optional_update_modules,
+            )
+
+    @api.one
+    def fix_db(self, init_and_conf_modules, to_update_modules):
+        """
+        Method to be called from wizard or automatic
+        """
         _logger.info('Trying to update db %s' % self.name)
 
         if init_and_conf_modules:
@@ -379,13 +545,13 @@ class database(models.Model):
             if init_and_conf_modules:
                 raise Warning(_(
                     'Could not fix db, try it manually and run again'))
+            # updated detail if an init have been run
+            update_modules = detail.get('update_modules')
+            optional_update_modules = detail.get('optional_update_modules')
+            to_update_modules = update_modules + optional_update_modules
 
-        # updated detail if an init have been run
-        update_modules = detail.get('update_modules')
-        optional_update_modules = detail.get('optional_update_modules')
-        to_update = update_modules + optional_update_modules
-        if to_update:
-            self.upgrade_modules(to_update)
+        if to_update_modules:
+            self.upgrade_modules(to_update_modules)
             update_state = self.refresh_update_state()
         return True
 
@@ -453,6 +619,32 @@ class database(models.Model):
         client = self.get_client()
         client.model('ir.module.module').update_list()
 
+    @api.multi
+    def check_module_version(self, module_name, version, operator_string):
+        database_ids = []
+        version = parse_version(version)
+        operators_dic = {
+            "=": operator.eq,
+            "<": operator.lt,
+            '<=': operator.le
+            }
+        op = operators_dic.get(operator_string)
+        if not op:
+            raise Warning(_('Operator must be one of: %s') % (
+                ', '.join(operators_dic.keys())))
+        for database in self:
+            client = database.get_client()
+            # on odoo is called latest but we call properly "installed"
+            installed_version = client.model('ir.module.module').browse(
+                ['name = %s' % module_name], limit=1).latest_version
+            # it should return a list with one element, if that element is
+            # false then module is not installed
+            if installed_version and installed_version[0]:
+                installed_version = parse_version(installed_version[0])
+                if op(installed_version, version):
+                    database_ids.append(database.id)
+        return self.browse(database_ids)
+
     @api.one
     @api.depends('state')
     def get_color(self):
@@ -461,6 +653,8 @@ class database(models.Model):
             color = 7
         elif self.state == 'cancel':
             color = 1
+        elif self.state == 'inactive':
+            color = 3
         if self.overall_state != 'ok':
             color = 2
         self.color = color
@@ -469,7 +663,7 @@ class database(models.Model):
     def _onchange_instance(self):
         instance = self.instance_id
         self.partner_id = instance.environment_id.partner_id
-        self.database_type_id = instance.database_type_id
+        # self.database_type_id = instance.database_type_id
         main_hostname = instance.main_hostname_id
         if main_hostname:
             self.alias_hostname_id = main_hostname.server_hostname_id
@@ -548,29 +742,36 @@ class database(models.Model):
                     or cancelled.'))
         return super(database, self).unlink()
 
-    @api.onchange('database_type_id', 'instance_id')
-    def onchange_database_type_id(self):
-        if self.database_type_id and self.instance_id:
-            self.name = ('%s_%s') % (
-                self.database_type_id.prefix,
+    # @api.onchange('database_type_id', 'instance_id')
+    # def onchange_database_type_id(self):
+    @api.onchange('instance_type_id', 'instance_id')
+    def onchange_instance_type_id(self):
+        # if self.database_type_id and self.instance_id:
+        if self.instance_id:
+            self.name = ('%s') % (
+                # self.instance_type_id.prefix,
                 self.instance_id.environment_id.name.replace('-', '_')
                 )
-            self.admin_password = self.database_type_id.db_admin_pass or \
+            self.demo_data = self.instance_type_id.demo_data
+            self.check_database = self.instance_type_id.check_database
+            self.backups_enable = self.instance_type_id.backups_enable
+            self.admin_password = self.instance_type_id.db_admin_pass or \
                 self.instance_id.name
 
-    @api.onchange('database_type_id', 'issue_date')
+    # @api.onchange('database_type_id', 'issue_date')
+    @api.onchange('instance_type_id', 'issue_date')
     def get_deact_date(self):
         deactivation_date = False
         drop_date = False
         if self.issue_date:
-            if self.database_type_id.auto_deactivation_days:
+            if self.instance_type_id.auto_deactivation_days:
                 deactivation_date = (datetime.strptime(
                     self.issue_date, '%Y-%m-%d') + relativedelta(
-                    days=self.database_type_id.auto_deactivation_days))
-            if self.database_type_id.auto_drop_days:
+                    days=self.instance_type_id.auto_deactivation_days))
+            if self.instance_type_id.auto_drop_days:
                 drop_date = (datetime.strptime(
                     self.issue_date, '%Y-%m-%d') + relativedelta(
-                    days=self.database_type_id.auto_drop_days))
+                    days=self.instance_type_id.auto_drop_days))
         self.deactivation_date = deactivation_date
         self.drop_date = drop_date
 
@@ -622,7 +823,7 @@ class database(models.Model):
         """Funcion que utliza erpeek para crear bds"""
         _logger.info("Creating db '%s'" % (self.name))
         client = self.get_client(not_database=True)
-        lang = self.database_type_id.install_lang_id or 'en_US'
+        lang = self.instance_type_id.install_lang_id or 'en_US'
         client.create_database(
             self.instance_id.admin_pass,
             self.name,
@@ -630,7 +831,9 @@ class database(models.Model):
             lang=lang,
             user_password=self.admin_password or 'admin')
         self.install_base_modules()
-        self.signal_workflow('sgn_to_active')
+        # config backups
+        self.config_backups()
+        self.action_activate()
 
     @api.multi
     def drop_db(self):
@@ -657,7 +860,7 @@ class database(models.Model):
                     _('Unable to drop Database. If you are working in an \
                     instance with "workers" then you can try \
                     restarting service. This is what we get:\n%s') % (e))
-        self.signal_workflow('sgn_cancel')
+        self.action_cancel()
 
     @api.one
     def backup_now(
@@ -783,7 +986,7 @@ class database(models.Model):
         return True
 
     @api.multi
-    def duplicate_db(self, new_database_name, backups_enable, database_type):
+    def duplicate_db(self, new_database_name, backups_enable):
         """Funcion que utiliza ws nativos de odoo para hacer duplicar bd"""
         self.ensure_one()
         sock = self.get_sock()
@@ -792,7 +995,7 @@ class database(models.Model):
             'name': new_database_name,
             'backups_enable': backups_enable,
             'issue_date': fields.Date.today(),
-            'database_type_id': database_type.id,
+            # 'database_type_id': database_type.id,
             })
         try:
             sock.duplicate_database(
@@ -803,7 +1006,7 @@ class database(models.Model):
                     e))
         client.model('db.database').backups_state(
             new_database_name, backups_enable)
-        new_db.signal_workflow('sgn_to_active')
+        new_db.action_activate()
         if backups_enable:
             new_db.config_backups()
         # devolvemos la accion de la nueva bd creada
@@ -839,7 +1042,7 @@ class database(models.Model):
     #         raise Warning(_(
     #             'Unable to duplicate Database. This is what we get:\n%s') % (
     #               e))
-    #     new_db.signal_workflow('sgn_to_active')
+    #     new_db.action_activate()
     #     # TODO retornar accion de ventana a la bd creada
 
     @api.multi
@@ -1109,10 +1312,19 @@ class database(models.Model):
         sudo('newaliases')
         sudo('/etc/init.d/postfix restart')
 
-# WORKFLOW
     @api.multi
-    def action_wfk_set_draft(self):
+    def action_to_draft(self):
         self.write({'state': 'draft'})
-        self.delete_workflow()
-        self.create_workflow()
         return True
+
+    @api.multi
+    def action_activate(self):
+        self.write({'state': 'active'})
+
+    @api.multi
+    def action_cancel(self):
+        self.write({'state': 'cancel'})
+
+    @api.multi
+    def action_inactive(self):
+        self.write({'state': 'inactive'})

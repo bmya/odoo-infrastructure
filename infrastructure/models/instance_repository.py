@@ -20,11 +20,16 @@ class instance_repository(models.Model):
 
     _name = 'infrastructure.instance_repository'
     _description = 'instance_repository'
+    _order = 'sequence'
 
     repository_id = fields.Many2one(
         'infrastructure.repository',
         string='Repository',
         required=True
+        )
+    sequence = fields.Integer(
+        related='repository_id.sequence',
+        store=True,
         )
     sources_from_id = fields.Many2one(
         'infrastructure.instance',
@@ -97,7 +102,8 @@ class instance_repository(models.Model):
     @api.multi
     def action_repository_pull_clone_and_checkout(self):
         # TODO view is not refreshing
-        return self.repository_pull_clone_and_checkout()
+        self.repository_pull_clone_and_checkout()
+        self.instance_id.check_instance_and_bds()
 
     @api.multi
     def action_delete(self):
@@ -127,26 +133,51 @@ class instance_repository(models.Model):
             ('instance_id', '=', self.sources_from_id.id),
             ], limit=1)
         if not source_repository:
-            raise Warning(_('Source repository not found'))
+            raise Warning(_(
+                'Source repository not found for %s on instance %s') % (
+                self.repository_id.name, self.sources_from_id.name))
         source_repository.repository_pull_clone_and_checkout()
-        return self.repository_pull_clone_and_checkout()
+        source_repository.instance_id.check_instance_and_bds()
+        self.repository_pull_clone_and_checkout()
+        self.instance_id.check_instance_and_bds()
 
-    @api.multi
+    @api.one
     def repository_pull_clone_and_checkout(self, update=True):
-        self.ensure_one()
         _logger.info("Updateing/getting repository %s with update=%s" % (
             self.repository_id.name, update))
         if self.actual_commit and not update:
             return True
         self.instance_id.environment_id.server_id.get_env()
         path = self.path
-        if self.instance_id.sources_from_id:
+        if self.sources_from_id:
+            # check if repository exists
+            source_repository = self.search([
+                ('repository_id', '=', self.repository_id.id),
+                ('instance_id', '=', self.sources_from_id.id),
+                ], limit=1)
+            if not source_repository:
+                raise Warning(_(
+                    'Source repository not found for %s on instance %s') % (
+                    self.repository_id.name, self.sources_from_id.name))
+            if source_repository.branch_id != self.branch_id:
+                raise Warning(_(
+                    'Source repository branch and target branch must be the '
+                    'same\n'
+                    '* Source repository branch: %s\n'
+                    '* Target repository branch: %s\n') % (
+                    source_repository.branch_id.name, self.branch_id.name))
+            actual_commit = "%s / %s" % (
+                source_repository.actual_commit,
+                fields.Datetime.to_string(
+                    fields.Datetime.context_timestamp(self, datetime.now())))
             remote_url = os.path.join(
-                self.instance_id.sources_from_id.sources_path,
+                self.sources_from_id.sources_path,
                 self.repository_id.directory
                 )
         else:
             remote_url = self.repository_id.url
+            actual_commit = fields.Datetime.to_string(
+                fields.Datetime.context_timestamp(self, datetime.now()))
         try:
             # TODO mejorar aca y usar la api de github para pasar depth = 1 y
             # manejar errores
@@ -159,13 +190,8 @@ class instance_repository(models.Model):
         except Exception, e:
             raise Warning(_('Error pulling git repository. This is what we get:\
                 \n%s' % e))
-        # por ahora lo usamos para chequear que ya se descargo
-        self.actual_commit = fields.Datetime.to_string(
-            fields.Datetime.context_timestamp(self, datetime.now()))
 
-        # marcamos que un instance restart requerido y un refresh_dbs_required
-        self.instance_id.write({
-            'odoo_service_state': 'restart_required',
-            'databases_state': 'refresh_dbs_required',
-            })
+        # por ahora lo usamos para chequear que ya se descargo
+        self.actual_commit = actual_commit
+
         return True

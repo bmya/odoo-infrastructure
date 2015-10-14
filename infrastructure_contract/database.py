@@ -15,6 +15,10 @@ class database(models.Model):
         string='Contract',
         domain="[('partner_id','child_of',partner_id),('state','=','open')]",
     )
+    contract_state = fields.Selection(
+        related='contract_id.state',
+        string='Contact Status',
+        )
 
     @api.one
     def upload_contract_data(self):
@@ -45,7 +49,7 @@ class database(models.Model):
             'partner_id', '=', commercial_partner.id)], limit=1)
         if not user:
             user = user.search([(
-                'partner_id', 'child_of', commercial_partner.id)])
+                'partner_id', 'child_of', commercial_partner.id)], limit=1)
         if not user:
             raise Warning(
                 _("You can not Upload a Contract if there is not user related\

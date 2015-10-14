@@ -17,7 +17,7 @@
             <field name="db_filter"/>
             <field name="server_id"/>
             <field name="environment_id"/>
-            <filter string="Not Cancel" name="not_cancel" domain="[('state','!=','cancel')]"/>
+            <filter string="Not Inactive" name="not_inactive" domain="[('state', '!=', 'inactive')]"/>
             <group expand="0" string="Group By...">
                 <filter string="Server" context="{'group_by':'server_id'}"/>
                 <filter string="Environment" context="{'group_by':'environment_id'}"/>
@@ -37,17 +37,20 @@
             <field name="name" invisible="1"/>
             <field name="docker_image_ids" invisible="1"/>
             <field name="advance_type" invisible="1"/>
+            <field name="sources_type" invisible="1"/>
             <header>
-                <button name="sgn_to_active"
+                <button name="action_activate"
+                    type="object"
                     states="draft"
                     string="to Active"
                     />
-                <button name="action_wfk_set_draft"
+                <button name="action_to_draft"
                     type="object"
                     states="cancel"
                     string="to Draft"
                     />
-                <button name="sgn_cancel"
+                <button name="action_cancel"
+                    type="object"
                     states="active"
                     string="Cancel"
                     />
@@ -80,7 +83,6 @@
                 </div>
                 <group>
                     <group>
-                        <field name="number"/>
                         <field name="sufix"/>
                         <label for="admin_pass"/>
                         <div>
@@ -93,40 +95,19 @@
                                 type="object"
                                 class="oe_link"/>
                         </div>
-                        <field name="db_filter"/>
-                        <field name="unaccent"/>
-                        <field name="workers"/>
+                        <field name="service_type"/>
                     </group>
                     <group>
-                        <label for="odoo_image_id"/>
-                        <div class="address_format">
-                            <field name="odoo_image_id" options="{'no_create': True}" style="width: 75%" />
-                            <field name="odoo_image_tag_id" options="{'no_create': True}" style="width: 24%" />
-                        </div>
-                        <label for="pg_image_id"/>
-                        <div class="address_format">
-                            <field name="pg_image_id" options="{'no_create': True}" style="width: 75%" />
-                            <field name="pg_image_tag_id" options="{'no_create': True}" style="width: 24%" />
-                        </div>
-                        <label for="odoo_container"/>
+                        <label for="odoo_service_state" string="Odoo and PG containers"/>
                         <div>
-                            <field name="odoo_container" class="oe_inline"/>
-                            <button name="run_odoo_service" string="Run" help="Run docker run" type="object" class="oe_link"/>
-                            <button name="restart_odoo_service" string="(Re)Start" help="Run docker restart" type="object" class="oe_link"/>
-                            <button name="stop_odoo_service" string="Stop" help="Run docker stop" type="object" class="oe_link"/>
-                            <button name="remove_odoo_service" string="Remove" help="Stop and then Run docker rm -f" type="object" class="oe_link"/>
+                            <button name="run_all" string="Run" help="Run docker run" type="object" class="oe_link"/>
+                            <button name="restart_all" string="(Re)Start" help="Run docker restart" type="object" class="oe_link"/>
+                            <button name="stop_all" string="Stop" help="Run docker stop" type="object" class="oe_link"/>
+                            <button name="remove_all" string="Remove" help="Stop and then Run docker rm -f" type="object" class="oe_link"/>
                         </div>
-                        <label for="pg_container"/>
-                        <div>
-                            <field name="pg_container" class="oe_inline"/>
-                            <button name="run_pg_service" string="Run" help="Run docker run" type="object" class="oe_link"/>
-                            <button name="restart_pg_service" string="(Re)Start" help="Run docker restart" type="object" class="oe_link"/>
-                            <button name="stop_pg_service" string="Stop" help="Run docker stop" type="object" class="oe_link"/>
-                            <button name="remove_pg_service" string="Remove" help="Stop and then Run docker rm -f" type="object" class="oe_link"/>
-                        </div>
-                        <field name="service_type"/>
                         <field name="odoo_service_state"/>
-                        <label for="databases_state"/>
+                        <field name="databases_state"/>
+<!--                         <label for="databases_state"/>
                         <div>
                             <field
                                 name="databases_state"
@@ -136,13 +117,12 @@
                                 type="object"
                                 attrs="{'invisible': ['|', ('databases_state', '=', 'ok'), ('state', '!=', 'active')]}"
                                 class="oe_link"/>
-                        </div>
+                        </div> -->
                     </group>
                 </group>
                 <notebook>
                     <page string="Configuration">
                         <group>
-                            <field name="addons_path"/>
                             <field name="type"/>
                             <field name="instance_host_ids"/>
                         </group>
@@ -173,33 +153,64 @@
                             <field name="run_pg_cmd"/>
                         </group>
                     </page>
-                    <page string="Repositories">
+                    <page string="Repositories" attrs="{'invisible': [('sources_type', '=', 'use_from')]}">
                         <button string="Add default repositories"
                             type="object"
                             name="add_repositories"/>
-                        <!-- we are not using for now -->
-<!--                         <button string="Pull, Clone to Inst. and Checkout all Repositoires"
+                        <button string="Pull, Clone to Inst. and Checkout all Repositoires"
                             icon="gtk-go-down"
                             type="object"
                             attrs="{'invisible': ['|',('sources_from_id','!=',False), ('state','!=','active')]}"
-                            name="repositories_pull_clone_and_checkout"/> -->
-                            <!-- we are not using for now -->
-<!--                         <button string="Pull from instance:"
+                            name="repositories_pull_clone_and_checkout"/>
+                        <button string="Pull from instance:"
                             icon="gtk-go-down"
                             type="object"
                             attrs="{'invisible': ['|',('sources_from_id','=',False), ('state','!=','active')]}"
-                            name="repositories_pull_clone_and_checkout"/> -->
-                        <!-- <field name="sources_from_id" attrs="{'invisible': [('sources_from_id','=',False)]}" class="oe_inline"/> -->
-                            <!-- we are not using for now -->
-<!--                         <button string="Update all modules and databases"
+                            name="repositories_pull_clone_and_checkout"/>
+                        <field name="sources_from_id" attrs="{'invisible': [('sources_from_id','=',False)]}" class="oe_inline"/>
+                        <button string="Update all modules and databases"
                             type="object"
                             states="active"
                             confirm="All databases on this instance will be run with -u all. This operation can take some minutes. Do you want to continue?"
-                            name="databases_update_all"/> -->
+                            name="databases_update_all"/>
                         <field name="instance_repository_ids" context="{'default_server_id': server_id}"/>
                     </page>
                     <page string="Advanced Conf">
                         <group>
+                            <group>
+                                <field name="number"/>
+                                <field name="db_filter"/>
+                                <field name="unaccent"/>
+                                <field name="workers"/>
+                            </group>
+                            <group>
+                                <label for="odoo_image_id"/>
+                                <div class="address_format">
+                                    <field name="odoo_image_id" options="{'no_create': True}" style="width: 75%" />
+                                    <field name="odoo_image_tag_id" options="{'no_create': True}" style="width: 24%" />
+                                </div>
+                                <label for="pg_image_id"/>
+                                <div class="address_format">
+                                    <field name="pg_image_id" options="{'no_create': True}" style="width: 75%" />
+                                    <field name="pg_image_tag_id" options="{'no_create': True}" style="width: 24%" />
+                                </div>
+                                <label for="odoo_container"/>
+                                <div>
+                                    <field name="odoo_container" class="oe_inline"/>
+                                    <button name="run_odoo_service" string="Run" help="Run docker run" type="object" class="oe_link"/>
+                                    <button name="restart_odoo_service" string="(Re)Start" help="Run docker restart" type="object" class="oe_link"/>
+                                    <button name="stop_odoo_service" string="Stop" help="Run docker stop" type="object" class="oe_link"/>
+                                    <button name="remove_odoo_service" string="Remove" help="Stop and then Run docker rm -f" type="object" class="oe_link"/>
+                                </div>
+                                <label for="pg_container"/>
+                                <div>
+                                    <field name="pg_container" class="oe_inline"/>
+                                    <button name="run_pg_service" string="Run" help="Run docker run" type="object" class="oe_link"/>
+                                    <button name="restart_pg_service" string="(Re)Start" help="Run docker restart" type="object" class="oe_link"/>
+                                    <button name="stop_pg_service" string="Stop" help="Run docker stop" type="object" class="oe_link"/>
+                                    <button name="remove_pg_service" string="Remove" help="Stop and then Run docker rm -f" type="object" class="oe_link"/>
+                                </div>
+                            </group>
                             <group>
                                 <field name="module_load"/>
                                 <field name="xml_rpc_port"/>
@@ -225,6 +236,9 @@
                                 <field name="logfile"/>
                                 <field name="data_dir"/>
                             </group>
+                        </group>
+                        <group>
+                            <field name="addons_path"/>
                         </group>
                     </page>
                     <page string="Notes">
@@ -300,7 +314,7 @@
     <field name="view_id" ref="view_instance_kanban"/>
     <field name="search_view_id" ref="view_infrastructure_instance_filter"/>
     <field name="domain">[]</field>
-    <field name="context">{'search_default_not_cancel': 1}</field>
+    <field name="context">{'search_default_not_inactive': 1}</field>
 </record>
 
 <menuitem

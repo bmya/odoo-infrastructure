@@ -20,7 +20,7 @@
 ##############################################################################
 {
     'name': 'Infrastructure',
-    'version': '0.2.0',
+    'version': '8.0.0.15.1',
     'description': 'Infrastructure Management',
     'category': 'base.module_category_knowledge_management',
     'author': 'ADHOC SA',
@@ -35,6 +35,7 @@
         },
     'data': [
         'wizard/duplicate_db_wizard_view.xml',
+        'wizard/infrastructure_database_email_wizard_view.xml',
         'wizard/change_db_passwd_wizard_view.xml',
         'wizard/restore_database_wizard_view.xml',
         'wizard/rename_db_wizard_view.xml',
@@ -44,6 +45,8 @@
         'wizard/infrastructure_database_backup_now_view.xml',
         'wizard/infrastructure_database_drop_wizard_view.xml',
         'wizard/infrastructure_instance_delete_wizard_view.xml',
+        'wizard/infrastructure_database_fix_wizard_view.xml',
+        'wizard/infrastructure_check_module_version_view.xml',
         'security/infrastructure_group.xml',
         'view/infrastructure_menuitem.xml',
         'view/base_module_view.xml',
@@ -70,10 +73,6 @@
         'view/server_docker_image_view.xml',
         'view/instance_repository_view.xml',
         'data/cron.xml',
-        'workflow/database_workflow.xml',
-        'workflow/environment_workflow.xml',
-        'workflow/instance_workflow.xml',
-        'workflow/server_workflow.xml',
         'security/ir.model.access.csv',
     ],
     'installable': True,
