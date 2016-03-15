@@ -20,7 +20,7 @@
 ##############################################################################
 {
     'name': 'Infrastructure',
-    'version': '8.0.0.15.1',
+    'version': '8.0.0.18.1',
     'description': 'Infrastructure Management',
     'category': 'base.module_category_knowledge_management',
     'author': 'ADHOC SA',
@@ -79,20 +79,20 @@
     'auto_install': False,
     'application': True,
     'demo': [
-        # TODO fix demo data
-        # 'data/demo/res.partner.csv',
-        # 'data/demo/infrastructure.repository_branch.csv',
-        # 'data/demo/infrastructure.repository.csv',
-        # 'data/demo/infrastructure.server_configuration.csv',
-        # 'data/demo/infrastructure.server.csv',
-        # 'data/demo/infrastructure.server_hostname.csv',
-        # 'data/demo/infrastructure.odoo_version.csv',
-        # 'data/demo/infrastructure.environment.csv',
-        # 'data/demo/infrastructure.db_filter.csv',
-        # 'data/demo/infrastructure.database_type.csv',
-        # 'data/demo/infrastructure.instance.csv',
-        # 'data/demo/infrastructure.instance_host.csv',
-        # 'data/demo/infrastructure.server_configuration_command.csv',
-        # 'data/demo/infrastructure.database.csv'
+        'demo/infrastructure.repository_branch.csv',
+        'demo/infrastructure.repository.csv',
+        'demo/infrastructure.server_configuration.csv',
+        # 'demo/infrastructure.server_configuration_command.csv',
+        'demo/infrastructure.server.csv',
+        'demo/infrastructure.server_hostname.csv',
+        'demo/infrastructure.odoo_version.csv',
+        'demo/infrastructure.docker_image.csv',
+        'demo/infrastructure.docker_image.tag.csv',
+        'demo/infrastructure.environment.csv',
+        'demo/infrastructure.db_filter.csv',
+        'demo/infrastructure.database_type.csv',
+        'demo/infrastructure.instance.csv',
+        'demo/infrastructure.instance_host.csv',
+        'demo/infrastructure.database.csv'
         ],
     }
